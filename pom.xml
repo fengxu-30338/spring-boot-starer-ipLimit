@@ -4,7 +4,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.fengxu</groupId>
     <artifactId>spring-boot-starter-iplimit</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.0-RELEASE</version>
     <name>iplimit</name>
     <description>iplimit tool for Spring Boot</description>
     <properties>

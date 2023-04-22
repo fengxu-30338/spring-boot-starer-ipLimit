@@ -30,7 +30,7 @@ public class xxxApplication {
 
 
 
-2. 编写配置文件
+2. 编写配置文件 application.yml
 
 ```yaml
 # 项目使用redis，需要设置下redis相关信息
