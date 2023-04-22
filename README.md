@@ -6,7 +6,22 @@ iplimit是一个简单而又强大的工具，能够很方便的实现接口的�
 
 ## 1. 导入依赖
 
+```xml
+<!-- 添加仓库 -->
+<repositories>
+    <repository>
+        <id>jitpack.io</id>
+        <url>https://jitpack.io</url>
+    </repository>
+</repositories>
 
+<!-- 添加依赖 -->
+<dependency>
+    <groupId>com.github.fengxu-30338</groupId>
+    <artifactId>spring-boot-starer-ipLimit</artifactId>
+    <version>1.0.0.RELEASE</version>
+</dependency>
+```
 
 
 
@@ -30,7 +45,7 @@ public class xxxApplication {
 
 
 
-2. 编写配置文件
+2. 编写配置文件 application.yml
 
 ```yaml
 # 项目使用redis，需要设置下redis相关信息
