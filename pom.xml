@@ -4,7 +4,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.fengxu</groupId>
     <artifactId>spring-boot-starter-iplimit</artifactId>
-    <version>1.0.0-RELEASE</version>
+    <version>1.1.0-RELEASE</version>
     <name>iplimit</name>
     <description>iplimit tool for Spring Boot</description>
     <properties>
@@ -34,6 +34,12 @@
             <artifactId>spring-boot-starter-web</artifactId>
             <optional>true</optional>
             <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.redisson</groupId>
+            <artifactId>redisson</artifactId>
+            <version>3.6.0</version>
         </dependency>
 
         <dependency>

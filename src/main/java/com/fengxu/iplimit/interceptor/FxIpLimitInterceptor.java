@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fengxu.iplimit.anno.FxIpLimit;
 import com.fengxu.iplimit.config.IpLimitConfigProperties;
 import com.fengxu.iplimit.util.CommonUtils;
+import com.fengxu.iplimit.util.RedissonUtil;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -36,6 +37,9 @@ public class FxIpLimitInterceptor implements HandlerInterceptor {
     @Resource
     private IpLimitHandler ipLimitHandler;
 
+    @Resource
+    private RedissonUtil redissonUtil;
+
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         HandlerMethod handlerMethod = (HandlerMethod)handler;
@@ -56,66 +60,73 @@ public class FxIpLimitInterceptor implements HandlerInterceptor {
         String ipLimitKey = getIpLimitRedisKey(methodCanonicalName, ipAddr);
         String ipBanRedisMap = getIpBanRedisMapName(currentIpLimitConf.getRedisPrefixKey());
         String ipBanKey = getIpBanRedisKey(ipAddr);
+        // 加分布式锁,只给指定ip访问的方法加上分布式锁，防止锁粒度过大,所以采用ipLimitKey即可
+        if (!redissonUtil.tryLock(ipLimitKey, 7)) {
+            returnUnknowError(response);
+        }
+        try {
+            // 判断是否已经存在于封禁map中
+            Object banTimeStr = redisTemplate.opsForHash().get(ipBanRedisMap, ipBanKey);
+            if (banTimeStr != null) {
+                Object json = redisTemplate.opsForHash().get(ipLimitRedisMap, ipLimitKey);
+                if (json == null) {
+                    returnUnknowError(response);
+                    return false;
+                }
+                IpAccessEntity ipAccessEntity = deseriesIpAccess(String.valueOf(json));
+                if (Long.parseLong(banTimeStr.toString()) >= System.currentTimeMillis()) {
+                    // 还处于封禁期
+                    ipAccessEntity.setAccessCount(ipAccessEntity.getAccessCount() + 1);
+                    ipAccessEntity.setTimestamp(System.currentTimeMillis());
+                    redisTemplate.opsForHash().put(ipLimitRedisMap, ipLimitKey, seriesIpAccess(ipAccessEntity));
+                    returnIpBanError(response, ipAccessEntity);
+                    return false;
+                } else {
+                    // 已经解封
+                    redisTemplate.opsForHash().delete(ipBanRedisMap, ipBanKey);
+                    redisTemplate.opsForHash().delete(ipLimitRedisMap, ipLimitKey);
+                }
+            }
 
-        // 判断是否已经存在于封禁map中
-        Object banTimeStr = redisTemplate.opsForHash().get(ipBanRedisMap, ipBanKey);
-        if (banTimeStr != null) {
+            // 不存在直接加入
+            if (!redisTemplate.opsForHash().hasKey(ipLimitRedisMap, ipLimitKey)) {
+                IpAccessEntity ipAccessEntity = new IpAccessEntity(ipAddr, methodCanonicalName, System.currentTimeMillis(), 1);
+                redisTemplate.opsForHash().put(ipLimitRedisMap, ipLimitKey, seriesIpAccess(ipAccessEntity));
+                return true;
+            }
+            // 存在判断时间间隔
             Object json = redisTemplate.opsForHash().get(ipLimitRedisMap, ipLimitKey);
             if (json == null) {
                 returnUnknowError(response);
                 return false;
             }
             IpAccessEntity ipAccessEntity = deseriesIpAccess(String.valueOf(json));
-            if (Long.parseLong(banTimeStr.toString()) >= System.currentTimeMillis()) {
-                // 还处于封禁期
-                ipAccessEntity.setAccessCount(ipAccessEntity.getAccessCount() + 1);
+            if (System.currentTimeMillis() < ipAccessEntity.getTimestamp()) {
+                returnUnknowError(response);
+                return false;
+            }
+
+            if (System.currentTimeMillis() - ipAccessEntity.getTimestamp() > currentIpLimitConf.getIpDetectInterval()) {
+                // 大于检测时间间隔，则重制访问次数为1次
+                ipAccessEntity.setAccessCount(1);
                 ipAccessEntity.setTimestamp(System.currentTimeMillis());
                 redisTemplate.opsForHash().put(ipLimitRedisMap, ipLimitKey, seriesIpAccess(ipAccessEntity));
-                returnIpBanError(response, ipAccessEntity);
-                return false;
+                return true;
             } else {
-                // 已经解封
-                redisTemplate.opsForHash().delete(ipBanRedisMap, ipBanKey);
-                redisTemplate.opsForHash().delete(ipLimitRedisMap, ipLimitKey);
+                // 小于访问间隔计算访问次数是否大于限制
+                ipAccessEntity.setAccessCount(ipAccessEntity.getAccessCount() + 1);
+                if (ipAccessEntity.getAccessCount() > currentIpLimitConf.getIpAccessMaxCountInDetectInterval()) {
+                    // 大于限制次数，计算解封时间，加入到解封时间map
+                    ipAccessEntity.setTimestamp(System.currentTimeMillis());
+                    long unsealTime = System.currentTimeMillis() + currentIpLimitConf.getIpBanTime();
+                    redisTemplate.opsForHash().put(ipBanRedisMap, ipBanKey, String.valueOf(unsealTime));
+                    returnIpBanError(response, ipAccessEntity);
+                    return false;
+                }
+                redisTemplate.opsForHash().put(ipLimitRedisMap, ipLimitKey, seriesIpAccess(ipAccessEntity));
             }
-        }
-
-        // 不存在直接加入
-        if (!redisTemplate.opsForHash().hasKey(ipLimitRedisMap, ipLimitKey)) {
-            IpAccessEntity ipAccessEntity = new IpAccessEntity(ipAddr, methodCanonicalName, System.currentTimeMillis(), 1);
-            redisTemplate.opsForHash().put(ipLimitRedisMap, ipLimitKey, seriesIpAccess(ipAccessEntity));
-            return true;
-        }
-        // 存在判断时间间隔
-        Object json = redisTemplate.opsForHash().get(ipLimitRedisMap, ipLimitKey);
-        if (json == null) {
-            returnUnknowError(response);
-            return false;
-        }
-        IpAccessEntity ipAccessEntity = deseriesIpAccess(String.valueOf(json));
-        if (System.currentTimeMillis() < ipAccessEntity.getTimestamp()) {
-            returnUnknowError(response);
-            return false;
-        }
-
-        if (System.currentTimeMillis() - ipAccessEntity.getTimestamp() > currentIpLimitConf.getIpDetectInterval()) {
-            // 大于检测时间间隔，则重制访问次数为1次
-            ipAccessEntity.setAccessCount(1);
-            ipAccessEntity.setTimestamp(System.currentTimeMillis());
-            redisTemplate.opsForHash().put(ipLimitRedisMap, ipLimitKey, seriesIpAccess(ipAccessEntity));
-            return true;
-        } else {
-            // 小于访问间隔计算访问次数是否大于限制
-            ipAccessEntity.setAccessCount(ipAccessEntity.getAccessCount() + 1);
-            if (ipAccessEntity.getAccessCount() + 1 > currentIpLimitConf.getIpAccessMaxCountInDetectInterval()) {
-                // 大于限制次数，计算解封时间，加入到解封时间map
-                ipAccessEntity.setTimestamp(System.currentTimeMillis());
-                long unsealTime = System.currentTimeMillis() + currentIpLimitConf.getIpBanTime();
-                redisTemplate.opsForHash().put(ipBanRedisMap, ipBanKey, String.valueOf(unsealTime));
-                returnIpBanError(response, ipAccessEntity);
-                return false;
-            }
-            redisTemplate.opsForHash().put(ipLimitRedisMap, ipLimitKey, seriesIpAccess(ipAccessEntity));
+        } finally {
+            redissonUtil.unlock(ipLimitKey);
         }
         return true;
     }

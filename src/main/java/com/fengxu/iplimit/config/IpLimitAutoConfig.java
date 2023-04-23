@@ -1,32 +1,45 @@
 package com.fengxu.iplimit.config;
 
 import com.fengxu.iplimit.EnableIpLimit;
-import com.fengxu.iplimit.interceptor.DefaultIpLimitHandler;
-import com.fengxu.iplimit.interceptor.FxIpLimitInterceptor;
-import com.fengxu.iplimit.interceptor.IpLimitHandler;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.redisson.Redisson;
+import org.redisson.api.RedissonClient;
+import org.redisson.config.Config;
+import org.redisson.config.SingleServerConfig;
+import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
-import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
-import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
+import org.springframework.util.StringUtils;
+
+import java.util.Objects;
 
 @Configuration
 @ComponentScan(basePackageClasses = EnableIpLimit.class)
-public class IpLimitAutoConfig implements WebMvcConfigurer {
+@Import(FxIpLimitWebConfig.class)
+public class IpLimitAutoConfig{
 
-    @Autowired
-    private FxIpLimitInterceptor ipLimitInterceptor;
-
-    @ConfigurationProperties(prefix = "fx-iplimit")
     @Bean
-    public IpLimitConfigProperties ipLimitConfigProperties() {
-        return new IpLimitConfigProperties();
+    @SuppressWarnings("all")
+    public RedissonClient redissonClient(RedisProperties redisProperties) {
+        String url = StringUtils.hasText(redisProperties.getUrl()) ? redisProperties.getUrl() :
+                "redis://" + redisProperties.getHost() + ":" + redisProperties.getPort();
+        Config config = new Config();
+        SingleServerConfig singleServerConfig = config.useSingleServer();
+        singleServerConfig.setAddress(url);
+        singleServerConfig.setDatabase(redisProperties.getDatabase());
+        if (Objects.nonNull(redisProperties.getPassword())) {
+            singleServerConfig.setPassword(redisProperties.getPassword());
+        }
+        if (Objects.nonNull(redisProperties.getTimeout())) {
+            singleServerConfig.setTimeout((int) redisProperties.getTimeout().toMillis());
+        }
+        RedissonClient redissonClient = Redisson.create(config);
+        return redissonClient;
     }
 
     @Bean
@@ -38,23 +51,5 @@ public class IpLimitAutoConfig implements WebMvcConfigurer {
         redisTemplate.setHashKeySerializer(stringSerializer);
         redisTemplate.setHashValueSerializer(stringSerializer);
         return redisTemplate;
-    }
-
-    @ConditionalOnMissingBean(FxIpLimitInterceptor.class)
-    @Bean
-    public FxIpLimitInterceptor getIpLimitInterceptor() {
-        return new FxIpLimitInterceptor();
-    }
-
-    @ConditionalOnMissingBean(IpLimitHandler.class)
-    @Bean
-    public IpLimitHandler ipLimitHandler() {
-        return new DefaultIpLimitHandler();
-    }
-
-    @Override
-    public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(ipLimitInterceptor)
-                .addPathPatterns("/**");
     }
 }
